@@ -1,0 +1,25 @@
+# Datos locales (perfiles biométricos, base de datos, secretos, registros)
+data/
+*.db
+*.db-wal
+*.db-shm
+.env
+secrets.json
+
+# Modelos (se descargan con scripts/download_models.py y se verifican por SHA-256)
+models/*.onnx
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# Capturas e imágenes personales: nunca al repositorio
+*.jpg
+*.jpeg
+*.png
+*.mp4
+!app/web/static/*.png

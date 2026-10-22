@@ -1,0 +1,29 @@
+[Unit]
+Description=Pi Sentinel - vigilancia local con reconocimiento facial
+After=network.target sound.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=@USER@
+SupplementaryGroups=video audio
+WorkingDirectory=@DIR@
+ExecStart=@DIR@/.venv/bin/python -m app.main run
+# Reinicia solo ante fallos y con límite (5 en 5 min); la causa queda en el journal y en data/logs/
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=10
+# Límites y endurecimiento
+MemoryMax=1G
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=@DIR@/data
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

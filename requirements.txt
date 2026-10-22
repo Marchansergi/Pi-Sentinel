@@ -1,0 +1,8 @@
+# Dependencias de ejecución. En la Raspberry Pi se instalan en un venv (ver install.sh).
+# opencv >= 4.8 es obligatorio: YuNet 2023mar y SFace usan cv2.FaceDetectorYN / FaceRecognizerSF.
+opencv-python-headless>=4.8
+numpy>=1.24
+fastapi>=0.110
+uvicorn>=0.27
+httpx>=0.26
+pydantic>=2.5

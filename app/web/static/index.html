@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Pi Sentinel</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Ccircle cx=%278%27 cy=%278%27 r=%276%27 fill=%27%232563eb%27/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo" aria-hidden="true">◉</span> Pi Sentinel <small id="device-name"></small></div>
+    <nav id="nav" aria-label="Secciones"></nav>
+    <div class="top-actions"><span id="mode-pill" class="pill">…</span><button id="logout" class="ghost hidden">Salir</button></div>
+  </header>
+  <main id="view" tabindex="-1"></main>
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+  <div id="login" class="overlay hidden">
+    <form id="login-form" class="card login-card">
+      <h2>Acceso</h2>
+      <p class="muted">Introduce la contraseña de administración.</p>
+      <label>Contraseña <input type="password" id="login-pw" autocomplete="current-password" required></label>
+      <p id="login-err" class="error"></p>
+      <button class="primary" type="submit">Entrar</button>
+    </form>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
