@@ -122,7 +122,8 @@ class SentinelService:
         self.tracker = PresenceTracker(TrackerConfig.from_settings(self.config.get().tracking))
         self.alarm = SoundAlert(self.config.get, paths.builtin_sounds_dir, paths.user_sounds_dir, paths.tmp_dir, audio_backend)
         self.notifier = NotificationQueue(self.db, self.config.get, self.secrets, ntfy_client)
-        self.events = EventManager(self.db, self.config.get, self.alarm, self.notifier)
+        self.chime = SoundAlert(self.config.get, paths.builtin_sounds_dir, paths.user_sounds_dir, paths.tmp_dir, audio_backend, section="entry")
+        self.events = EventManager(self.db, self.config.get, self.alarm, self.notifier, chime=self.chime)
         self.gate = MotionGate()
 
         self._mode = Mode.STOPPED
@@ -169,6 +170,7 @@ class SentinelService:
             self._thread.join(8)
         self.camera.stop()
         self.alarm.shutdown()
+        self.chime.shutdown()
         self.notifier.stop()
         self.db.close()
 
@@ -350,6 +352,7 @@ class SentinelService:
             "components": self.component_status(),
             "ntfy": self.notifier.status(),
             "alarm": self.alarm.status(),
+            "chime": self.chime.status(),
             "last_event": self.events.last(),
             "recent_events_24h": self.events.recent_count(24),
             "people": {"total": len(self.people.list_people()), "active_ready": len(gallery)},

@@ -430,3 +430,21 @@ def test_graceful_shutdown_hook_runs_on_app_stop(paths):
     assert called == [1]
     svc.shutdown()
     svc.shutdown()  # idempotente
+
+
+def test_chime_endpoints_settings_and_shared_sound_deletion(web, tmp_path):
+    svc, api = web
+    a = api.get("/api/alarm").json()
+    assert a["chime"]["audio_available"] and "entrada.wav" in [s["name"] for s in a["sounds"]]
+    assert api.post("/api/alarm/chime-test").json()["state"] == "TRIGGERED"
+    svc.chime.join()
+    assert api.put("/api/settings", json={"entry": {"volume": 2}}).status_code == 422
+    assert api.put("/api/settings", json={"entry": {"sound": "../x.wav"}}).status_code == 422
+    good = tmp_path / "ok.wav"
+    generate_default_wav(good)
+    api.post("/api/alarm/sounds?name=mio.wav", content=good.read_bytes(), headers={"Content-Type": "audio/wav"})
+    api.put("/api/settings", json={"entry": {"sound": "mio.wav", "on_unknown": False}})
+    api.post("/api/alarm/mute", json={"minutes": 10})
+    assert svc.chime.is_muted() and svc.alarm.is_muted()  # «silenciar» cubre ambos
+    api.delete("/api/alarm/sounds/mio.wav")
+    assert svc.config.get().entry.sound == "entrada.wav"

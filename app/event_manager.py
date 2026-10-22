@@ -53,11 +53,12 @@ def build_notification(status: IdentityStatus, event_id: str, device: str, ts: f
 
 
 class EventManager:
-    def __init__(self, db: Database, get_settings: Callable[[], object], alarm, notifier, clock: Callable[[], float] = time.time) -> None:
+    def __init__(self, db: Database, get_settings: Callable[[], object], alarm, notifier, clock: Callable[[], float] = time.time, chime=None) -> None:
         self._db = db
         self._get = get_settings
         self._alarm = alarm
         self._notifier = notifier
+        self._chime = chime
         self._clock = clock
         self._lock = threading.Lock()
         self._last_alert_at: float | None = None
@@ -92,11 +93,12 @@ class EventManager:
         settings = self._get()
         policy = getattr(settings.policy, ev.status.value.lower())
         result = {"event_id": ev.event_id, "status": ev.status.value, "policy": policy, "dry_run": dry_run, "at": ev.at}
+        if dry_run:
+            result["action"] = {"alert": "would_alert", "log": "would_log"}.get(policy, "ignored")
+            return result
         if policy == "ignore":
             result["action"] = "ignored"
-            return result
-        if dry_run:
-            result["action"] = "would_alert" if policy == "alert" else "would_log"
+            result["chime"] = self._safe_chime(ev, settings, "NONE")
             return result
 
         alarm_state, notify_state, detail = "NONE", "NONE", ""
@@ -112,6 +114,7 @@ class EventManager:
                 notify_state = self._safe_notify(ev, settings)
             self._db.execute("UPDATE events SET alarm_state=?, notify_state=?, detail=? WHERE id=?", (alarm_state, notify_state, detail, ev.event_id))
         result.update(action="alerted" if policy == "alert" else "logged", alarm=alarm_state, notify=notify_state)
+        result["chime"] = self._safe_chime(ev, settings, alarm_state)
         self.last_event = {"id": ev.event_id, "status": ev.status.value, "at": ev.at}
         return result
 
@@ -132,6 +135,20 @@ class EventManager:
             return self._alarm.trigger()
         except Exception:
             log.exception("La alarma falló")
+            return "ERROR"
+
+    def _safe_chime(self, ev: TrackerEvent, settings, alarm_state: str) -> str:
+        """Sonido de entrada: aparte de la alarma, nunca encima de ella y sin afectar al resto."""
+        try:
+            if self._chime is None:
+                return "NONE"
+            if not getattr(settings.entry, f"on_{ev.status.value.lower()}"):
+                return "SKIPPED"
+            if alarm_state == "TRIGGERED" or self._alarm.playing():
+                return "SKIPPED"  # ya está sonando la alarma
+            return self._chime.trigger()
+        except Exception:
+            log.exception("El sonido de entrada falló")
             return "ERROR"
 
     def _safe_notify(self, ev: TrackerEvent, settings) -> str:

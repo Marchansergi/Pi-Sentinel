@@ -394,7 +394,7 @@ def create_app(
     @app.get("/api/alarm")
     def alarm_status(request: Request):
         require(request)
-        return {"status": service.alarm.status(), "sounds": service.alarm.list_sounds()}
+        return {"status": service.alarm.status(), "chime": service.chime.status(), "sounds": service.alarm.list_sounds()}
 
     @app.post("/api/alarm/test")
     def alarm_test(request: Request):
@@ -402,16 +402,24 @@ def create_app(
         state = service.alarm.trigger(force=True)
         return {"state": state, "error": service.alarm.last_error if state == "ERROR" else ""}
 
+    @app.post("/api/alarm/chime-test")
+    def chime_test(request: Request):
+        require(request)
+        state = service.chime.trigger(force=True)
+        return {"state": state, "error": service.chime.last_error if state == "ERROR" else ""}
+
     @app.post("/api/alarm/stop")
     def alarm_stop(request: Request):
         require(request)
         service.alarm.stop()
+        service.chime.stop()
         return {"ok": True}
 
     @app.post("/api/alarm/mute")
     def alarm_mute(req: MuteReq, request: Request):
         require(request)
         until = service.alarm.mute(req.minutes)
+        service.chime.mute(req.minutes)  # «silenciar» afecta a la alarma y al sonido de entrada
         return {"muted": service.alarm.is_muted(), "until": until or None}
 
     @app.post("/api/alarm/sounds")
@@ -430,8 +438,11 @@ def create_app(
     def alarm_delete_sound(name: str, request: Request):
         require(request)
         service.alarm.delete_user_sound(name)
-        if service.config.get().alarm.sound == name:
+        cfg = service.config.get()
+        if cfg.alarm.sound == name:
             service.config.update({"alarm": {"sound": "default"}})
+        if cfg.entry.sound == name:
+            service.config.update({"entry": {"sound": "entrada.wav"}})
         return {"ok": True, "sounds": service.alarm.list_sounds()}
 
     # ------------------------------------------------------------------ notificaciones

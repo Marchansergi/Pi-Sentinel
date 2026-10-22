@@ -120,6 +120,20 @@ class AlarmSettings(_Model):
         return v
 
 
+class EntrySettings(AlarmSettings):
+    """Sonido breve cuando se confirma que alguien ha entrado (independiente de la alarma)."""
+
+    enabled: bool = True
+    sound: str = "entrada.wav"
+    volume: float = Field(default=0.7, ge=0.0, le=1.0)
+    duration_seconds: float = Field(default=4.0, ge=1.0, le=300.0)
+    repetitions: int = Field(default=1, ge=1, le=50)
+    min_interval_seconds: float = Field(default=10.0, ge=0.0, le=3600.0)
+    on_authorized: bool = True
+    on_unknown: bool = True
+    on_unverified: bool = True
+
+
 class NtfySettings(_Model):
     enabled: bool = False
     server: str = "https://ntfy.sh"
@@ -184,6 +198,7 @@ class Settings(_Model):
     tracking: TrackingSettings = TrackingSettings()
     policy: PolicySettings = PolicySettings()
     alarm: AlarmSettings = AlarmSettings()
+    entry: EntrySettings = EntrySettings()
     ntfy: NtfySettings = NtfySettings()
     web: WebSettings = WebSettings()
     storage: StorageSettings = StorageSettings()

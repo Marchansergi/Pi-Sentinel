@@ -21,6 +21,8 @@ import wave
 from pathlib import Path
 from typing import Callable, Protocol
 
+import numpy as np
+
 log = logging.getLogger(__name__)
 
 MAX_SOUND_BYTES = 8 * 1024 * 1024
@@ -123,10 +125,29 @@ def read_wav(data: bytes | Path) -> tuple[int, int, bytes]:
         raise AudioError(f"Fichero WAV no válido: {exc}") from exc
 
 
-def build_pcm(pcm: bytes, channels: int, rate: int, volume: float, repetitions: int, duration: float) -> bytes:
-    import numpy as np
+def generate_chime_wav(path: Path, rate: int = 22050) -> None:
+    """Timbre suave de respaldo (dos notas) si falta el sonido de entrada incluido."""
+    t = np.arange(int(0.9 * rate)) / rate
+    env = np.exp(-4.0 * t)
+    wave_ = np.sin(2 * np.pi * 784 * t) * env
+    t2 = t[: int(0.6 * rate)]
+    wave_[int(0.25 * rate):int(0.25 * rate) + len(t2)] += np.sin(2 * np.pi * 1047 * t2) * np.exp(-5.0 * t2)
+    data = (wave_ / max(1e-9, np.abs(wave_).max()) * 0.8 * 32767).astype("<i2")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(data.tobytes())
 
+
+def build_pcm(pcm: bytes, channels: int, rate: int, volume: float, repetitions: int, duration: float, normalize: bool = False) -> bytes:
     samples = np.frombuffer(pcm[: len(pcm) - len(pcm) % 2], dtype="<i2")
+    if normalize and samples.size:
+        peak = float(np.abs(samples.astype(np.int32)).max())
+        target = 0.9 * 32767
+        if 0 < peak < target:  # sube los sonidos grabados muy bajos (máx. ×8) para que el volumen sea útil
+            samples = np.clip(samples.astype(np.float32) * min(target / peak, 8.0), -32768, 32767).astype("<i2")
     if volume < 0.999:
         samples = (samples.astype(np.float32) * volume).astype("<i2")
     out = np.tile(samples, max(1, repetitions))
@@ -146,7 +167,9 @@ class SoundAlert:
         backend: AudioBackend | None = None,
         clock: Callable[[], float] = time.monotonic,
         wall: Callable[[], float] = time.time,
+        section: str = "alarm",
     ) -> None:
+        self.section = section  # sección de ajustes que gobierna este canal: «alarm» o «entry»
         self._get = get_settings
         self.builtin_dir, self.user_dir, self.tmp_dir = Path(builtin_dir), Path(user_dir), Path(tmp_dir)
         self._backend = backend or SubprocessBackend()
@@ -160,18 +183,28 @@ class SoundAlert:
         self.last_played_at: float | None = None
         self.player: str | None = None
         self.default_path = self.builtin_dir / "default_alarm.wav"
+        self.chime_path = self.builtin_dir / "entrada.wav"
 
     # -- sonidos ------------------------------------------------------------------
 
+    def _cfg(self):
+        return getattr(self._get(), self.section)
+
     def ensure_default(self) -> None:
-        if not self.default_path.exists():
-            try:
-                generate_default_wav(self.default_path)
-            except OSError as exc:
-                log.error("No se pudo crear el sonido por defecto: %s", exc)
+        for path, gen in ((self.default_path, generate_default_wav), (self.chime_path, generate_chime_wav)):
+            if not path.exists():
+                try:
+                    gen(path)
+                except OSError as exc:
+                    log.error("No se pudo crear el sonido %s: %s", path.name, exc)
+
+    def _builtin_names(self) -> list[str]:
+        if not self.builtin_dir.is_dir():
+            return []
+        return sorted(p.name for p in self.builtin_dir.glob("*.wav") if p != self.default_path)
 
     def list_sounds(self) -> list[dict]:
-        out = [{"name": "default", "builtin": True}]
+        out = [{"name": "default", "builtin": True}] + [{"name": n, "builtin": True} for n in self._builtin_names()]
         if self.user_dir.is_dir():
             out += [{"name": p.name, "builtin": False} for p in sorted(self.user_dir.glob("*.wav"))]
         return out
@@ -180,6 +213,8 @@ class SoundAlert:
         if name == "default":
             self.ensure_default()
             return self.default_path
+        if name in self._builtin_names():
+            return self.builtin_dir / name
         p = (self.user_dir / name).resolve()
         if p.parent != self.user_dir.resolve() or not p.is_file():
             raise AudioError(f"El sonido '{name}' no existe")
@@ -197,8 +232,8 @@ class SoundAlert:
 
     def delete_user_sound(self, name: str) -> None:
         p = self.resolve(name)
-        if p == self.default_path:
-            raise AudioError("No se puede eliminar el sonido por defecto")
+        if p.parent != self.user_dir.resolve():
+            raise AudioError("No se pueden eliminar los sonidos incluidos")
         p.unlink()
 
     # -- control ------------------------------------------------------------------
@@ -224,7 +259,7 @@ class SoundAlert:
     def trigger(self, force: bool = False) -> str:
         """Dispara la alarma. Estados: TRIGGERED, DISABLED, MUTED, RATE_LIMITED, BUSY, ERROR."""
         try:
-            cfg = self._get().alarm
+            cfg = self._cfg()
             with self._lock:
                 if not force:
                     if not cfg.enabled:
@@ -243,11 +278,11 @@ class SoundAlert:
                     self.last_error = str(exc)
                     log.error("Alarma no disponible: %s", exc)
                     return "ERROR"
-                data = build_pcm(pcm, ch, rate, cfg.volume, cfg.repetitions, cfg.duration_seconds)
+                data = build_pcm(pcm, ch, rate, cfg.volume, cfg.repetitions, cfg.duration_seconds, normalize=True)
                 self._last_start = self._clock()
                 self._stop.clear()
                 self._thread = threading.Thread(
-                    target=self._play, args=(data, ch, rate, cfg.audio_device), name="alarm", daemon=True
+                    target=self._play, args=(data, ch, rate, cfg.audio_device), name=f"sound-{self.section}", daemon=True
                 )
                 self._thread.start()
                 return "TRIGGERED"
@@ -292,7 +327,7 @@ class SoundAlert:
         self.join(3.0)
 
     def status(self) -> dict:
-        cfg = self._get().alarm
+        cfg = self._cfg()
         try:
             available, player, problem = True, self._backend.check(), ""
         except AudioError as exc:

@@ -23,6 +23,7 @@ confirmados: el sistema puede equivocarse.
   umbral configurable y tres estados: `AUTHORIZED`, `UNKNOWN`, `UNVERIFIED`.
 - Seguimiento de presencias: un evento por presencia, confirmación por tiempo y observaciones,
   salida por ausencia prolongada, nueva entrada = nuevo evento.
+- **Sonido de entrada**: un timbre breve en la Pi cuando se confirma que alguien ha entrado (autorizada, desconocida o no verificable, a elegir), con sonido incluido de serie y elegible o subible desde tu dispositivo.
 - Alarma sonora local (sin Internet): sonido propio, volumen, duración, repeticiones, intervalo
   mínimo, silencio temporal.
 - Notificaciones ntfy con cola persistente en SQLite, reintentos con espera progresiva, estados
@@ -140,6 +141,14 @@ equipo se apaga justo durante un envío, ese aviso podría repetirse al reinicia
 intervalo mínimo entre alarmas, activar/desactivar sin detener la vigilancia, «Probar», «Detener»,
 «Silenciar 30 min». Si no hay audio, se muestra el error claro y la vigilancia y ntfy continúan.
 
+**Sonido de entrada** (Alarmas → Sonido de entrada): suena al confirmarse una presencia, **aparte** de la
+alarma y de ntfy. Viene activado con el timbre `sounds/entrada.wav` (CC0, ver `sounds/LICENCIAS.md`). Puedes
+cambiarlo por otro de los incluidos o subir un `.wav` desde tu dispositivo (Alarmas → Sonido propio) y
+elegirlo en la lista; elige para qué estados suena y su volumen, duración, repeticiones e intervalo. Reglas:
+no suena en modo prueba; si ya suena (o acaba de sonar) la alarma de desconocido no se superpone; funciona
+aunque la política de «autorizada» sea ignorar (esa política solo afecta al historial); «Silenciar» y
+«Detener» cubren ambos sonidos. Los sonidos muy bajos se normalizan al reproducir (máx. ×8).
+
 Políticas por estado (Alarmas → Confirmación y política): `AUTHORIZED`: ignorar; `UNKNOWN`: alertar;
 `UNVERIFIED`: solo registrar (modo estricto: alertar). Además: tiempo de confirmación, observaciones
 mínimas, ausencia para «salida», tiempo entre alertas.
@@ -172,6 +181,7 @@ proxy, todos los clientes parecen la misma IP para los límites.
 | Eventos (fecha, id, estado, alarma, notificación) | `data/sentinel.db` | Retención configurable (30 días) |
 | Cola/historial de notificaciones (título y texto) | `data/sentinel.db` | Sin biometría |
 | Token de ntfy, hash de la contraseña (scrypt) | `data/secrets.json` | 0600 |
+| Sonidos subidos por ti | `data/sounds/` | Solo audio |
 | Registros | `data/logs/` | Sin secretos |
 
 **No se guarda** vídeo, fotos, imágenes de desconocidos ni capturas; los fotogramas se procesan en
@@ -194,8 +204,8 @@ Los datos biométricos requieren protección especial y, según tu jurisdicción
 
 ## Estado de validación
 
-Pruebas automatizadas: `pip install -r requirements-dev.txt && python -m pytest` (166 pruebas, datos
-sintéticos). **Ejecutadas aquí (x86_64, sin hardware):** todas pasan. Además se verificaron, en este equipo:
+Pruebas automatizadas: `pip install -r requirements-dev.txt && python -m pytest` (180 pruebas, datos
+sintéticos). El sonido de entrada se probó con audio simulado y su carga/validación con el fichero real; **no se ha oído por un altavoz real** y el timbre se eligió por duración y formato, no por escucha. **Ejecutadas aquí (x86_64, sin hardware):** todas pasan. Además se verificaron, en este equipo:
 arranque real de la aplicación, parada ordenada con SIGTERM, permisos de ficheros, rechazo de enlace
 a red sin contraseña, la interfaz completa en Chromium (flujo de registro, modo prueba, vigilancia, historial,
 alarma, ntfy, login), y los tres modelos reales con imágenes públicas de muestra.
@@ -247,7 +257,7 @@ app/            camera · person_detector · face_recognition · authorized_peop
                 event_manager · sound_alert · ntfy_client · notification_queue · database · security
                 config · service (orquestador) · main · web/ (API + interfaz)
 scripts/        download_models.py · update.sh · uninstall.sh · pi-sentinel.service.in
-tests/          pytest (166) · ui_harness.py (servidor de desarrollo con cámara simulada)
+tests/          pytest (180) · ui_harness.py (servidor de desarrollo con cámara simulada)
 docs/           ARQUITECTURA.md · CALIBRACION.md
 ```
 

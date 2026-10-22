@@ -15,7 +15,8 @@ from conftest import (FakeAudio, SourceFactory, StubDetector, StubFaces, blank_f
 FAST = {"tracking": {"confirm_seconds": 0.0, "min_observations": 2, "min_authorized_observations": 2,
                      "alert_cooldown_seconds": 0.0, "exit_seconds": 5.0},
         "detection": {"motion_gate": False, "analysis_fps": 10.0},
-        "alarm": {"min_interval_seconds": 0.0}}
+        "alarm": {"min_interval_seconds": 0.0},
+        "entry": {"enabled": False}}  # el sonido de entrada se prueba aparte (test_entry_chime.py)
 
 
 @pytest.fixture

@@ -439,7 +439,7 @@ views.alarmas = {
     const al = await act(() => api('GET', '/api/alarm'));
     if (!al) return;
     const reload = () => go('alarmas');
-    const soundOptions = al.sounds.map((s) => [s.name, s.builtin ? 'Sirena integrada' : s.name]);
+    const soundOptions = al.sounds.map((s) => [s.name, s.name === 'default' ? 'Sirena integrada' : s.name === 'entrada.wav' ? 'Timbre de entrada (integrado)' : s.builtin ? `Integrado: ${s.name}` : s.name]);
     const statusEl = h('div', { class: 'stack' });
     const st = al.status;
     statusEl.append(...nn(h('div', {}, badge(st.audio_available ? 'Audio disponible' : 'Sin audio', st.audio_available ? 'ok' : 'error'), ' ', st.player ? `Reproductor: ${st.player}` : ''),
@@ -467,6 +467,20 @@ views.alarmas = {
           { path: 'alarm.repetitions', label: 'Repeticiones', type: 'number', min: 1, max: 50, int: true },
           { path: 'alarm.min_interval_seconds', label: 'Tiempo mínimo entre alarmas (s)', type: 'number', min: 0, max: 3600, step: 1 },
           { path: 'alarm.audio_device', label: 'Dispositivo ALSA (opcional)', type: 'text', hint: 'Ej. plughw:1,0. Vacío = predeterminado' },
+        ])),
+      h('section', { class: 'card' }, h('h2', {}, 'Sonido de entrada'),
+        h('p', { class: 'muted small' }, 'Un sonido breve en la Raspberry Pi cuando se confirma que alguien ha entrado. Es independiente de la alarma y de las notificaciones; si suena la alarma de desconocido, no se superpone. Elige uno de los incluidos o sube el tuyo desde tu dispositivo (arriba, «Sonido propio»).'),
+        h('div', { class: 'row' }, h('button', { onclick: async () => { const r = await act(() => api('POST', '/api/alarm/chime-test')); if (r && r.state !== 'TRIGGERED') toast(r.error || ALARM_ES[r.state] || r.state, true); else if (r) toast('Sonando…'); } }, 'Probar sonido de entrada')),
+        settingsForm([
+          { path: 'entry.enabled', label: 'Sonido de entrada activado', type: 'checkbox' },
+          { path: 'entry.sound', label: 'Sonido', type: 'select', options: soundOptions },
+          { path: 'entry.volume', label: 'Volumen', type: 'range', min: 0, max: 1, step: 0.05 },
+          { path: 'entry.duration_seconds', label: 'Duración máxima (s)', type: 'number', min: 1, max: 300, step: 1 },
+          { path: 'entry.repetitions', label: 'Repeticiones', type: 'number', min: 1, max: 50, int: true },
+          { path: 'entry.min_interval_seconds', label: 'Tiempo mínimo entre sonidos (s)', type: 'number', min: 0, max: 3600, step: 1 },
+          { path: 'entry.on_authorized', label: 'Cuando entra una persona autorizada', type: 'checkbox' },
+          { path: 'entry.on_unknown', label: 'Cuando entra una persona desconocida (si la alarma está desactivada o silenciada)', type: 'checkbox' },
+          { path: 'entry.on_unverified', label: 'Cuando entra una persona no verificable', type: 'checkbox' },
         ])),
       h('section', { class: 'card' }, h('h2', {}, 'Confirmación y política de alertas'),
         settingsForm([
