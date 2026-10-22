@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from app.config import ConfigStore, EntrySettings, PROJECT_ROOT
+from app.config import AlarmSettings, ConfigStore, EntrySettings, PROJECT_ROOT
 from app.database import Database
 from app.domain import IdentityStatus as S
 from app.event_manager import EventManager
@@ -107,7 +107,7 @@ def test_bundled_chime_file_is_valid_short_and_cc0_documented():
 
 
 def test_missing_bundled_chime_is_regenerated(tmp_path):
-    sa = SoundAlert(lambda: SimpleNamespace(entry=EntrySettings()), tmp_path / "b", tmp_path / "u", tmp_path / "t", FakeAudio(), section="entry")
+    sa = SoundAlert(lambda: SimpleNamespace(entry=EntrySettings(), alarm=AlarmSettings()), tmp_path / "b", tmp_path / "u", tmp_path / "t", FakeAudio(), section="entry")
     sa.ensure_default()
     assert (tmp_path / "b" / "entrada.wav").is_file()
     assert sa.trigger() == "TRIGGERED"; sa.join()

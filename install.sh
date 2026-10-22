@@ -58,7 +58,7 @@ run mkdir -p "$DIR/data"; run chmod 700 "$DIR/data"; [ -f "$DIR/.env" ] && run c
 
 say "9-10. Comprobación de cámara y audio"
 [ "$DRY" = 1 ] || "$DIR/.venv/bin/python" -m app.main check || echo "AVISO: la comprobación detectó problemas (ver arriba)."
-echo "Prueba de sonido manual: aplay /usr/share/sounds/alsa/Front_Center.wav"
+echo "Diagnóstico de audio (Bluetooth/HDMI/jack): $DIR/.venv/bin/python -m app.main audio-test"
 
 say "11-12. ntfy"
 echo "Se configura desde la interfaz (Notificaciones): genera un tópico aleatorio, suscríbete desde la app ntfy del móvil y pulsa «Enviar notificación de prueba»."
@@ -67,7 +67,9 @@ say "14. Servicio systemd (inicio automático)"
 if [ "$SERVICE" = 1 ] || { [ "$YES" = 0 ] && ask "¿Instalar el servicio systemd para iniciar Pi Sentinel al arrancar?"; }; then
   UNIT=/etc/systemd/system/pi-sentinel.service
   if [ "$DRY" = 1 ]; then echo "+ (generaría $UNIT para el usuario $USER)"; else
-    sed -e "s|@USER@|$USER|g" -e "s|@DIR@|$DIR|g" "$DIR/scripts/pi-sentinel.service.in" | sudo tee "$UNIT" >/dev/null
+    sed -e "s|@USER@|$USER|g" -e "s|@UID@|$(id -u)|g" -e "s|@DIR@|$DIR|g" "$DIR/scripts/pi-sentinel.service.in" | sudo tee "$UNIT" >/dev/null
+    echo "Para que el audio (p. ej. un altavoz Bluetooth) funcione sin tener la sesión abierta, hace falta mantener tu sesión de audio activa: sudo loginctl enable-linger $USER"
+    if ask "¿Ejecutar 'loginctl enable-linger $USER' ahora?"; then sudo loginctl enable-linger "$USER"; fi
     sudo systemctl daemon-reload; sudo systemctl enable --now pi-sentinel.service
     echo "Servicio activo. Desactivar el inicio automático: sudo systemctl disable --now pi-sentinel"
   fi

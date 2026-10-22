@@ -157,16 +157,17 @@ class FakeAudio:
         self.fail_check, self.fail_play, self.delay = fail_check, fail_play, delay
         self.played = []
 
-    def check(self):
+    def check(self, player="auto"):
         from app.sound_alert import AudioError
 
         if self.fail_check:
             raise AudioError("No se encontró ningún reproductor de audio")
         return "fake"
 
-    def play(self, path, stop, device=""):
+    def play(self, path, stop, device="", player="auto"):
         from app.sound_alert import AudioError
 
+        self.targets = getattr(self, "targets", []) + [(player, device)]
         if self.fail_play:
             raise AudioError("sin salida de audio")
         self.played.append(Path(path).name)

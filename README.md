@@ -153,6 +153,27 @@ Políticas por estado (Alarmas → Confirmación y política): `AUTHORIZED`: ign
 `UNVERIFIED`: solo registrar (modo estricto: alertar). Además: tiempo de confirmación, observaciones
 mínimas, ausencia para «salida», tiempo entre alertas.
 
+### Altavoz Bluetooth o «no suena nada»
+
+Pi Sentinel reproduce con `pw-play` (PipeWire) → `paplay` (PulseAudio) → `aplay` (ALSA), en ese orden, y
+usa **la salida predeterminada del sistema**. Para un altavoz Bluetooth:
+
+1. Empareja y conecta el altavoz en el sistema (`bluetoothctl`, o el icono de Bluetooth del escritorio) y
+   márcalo como salida predeterminada (`wpctl status` / `pactl get-default-sink`). Si Pi Sentinel suena en
+   HDMI/jack en vez de en el altavoz, el predeterminado no es el altavoz.
+2. Ejecuta `python -m app.main audio-test`: muestra reproductores y salidas y reproduce un tono con cada
+   reproductor para que oigas cuál funciona. Fija el que suene en *Alarmas → Reproductor de audio* (y, si
+   hace falta, la salida concreta, p. ej. `bluez_output.XX_XX_XX_XX_XX_XX.1`).
+3. Si lo ejecutas como **servicio systemd**, necesita llegar a tu sesión de audio: el instalador añade
+   `XDG_RUNTIME_DIR` y propone `sudo loginctl enable-linger <usuario>` para que esa sesión (y la conexión
+   Bluetooth) exista sin tener el escritorio abierto. Si instalaste antes de este cambio, vuelve a ejecutar
+   `./install.sh --service` o añade esa variable a la unidad.
+4. El silencio previo (0,5 s por defecto) evita que el altavoz «dormido» se coma el inicio; súbelo si aún
+   se corta. «Probar» ahora espera el resultado real y muestra el error del reproductor si falla.
+
+Limitación: si el reproductor termina sin error pero el sonido sale por otra salida, no hay forma de
+detectarlo desde la aplicación; `audio-test` y la salida predeterminada son la guía.
+
 ## Iniciar y detener la vigilancia, inicio automático, registros
 
 - Panel → *Activar vigilancia* / *Modo prueba* / *Detener*. El estado se recuerda al reiniciar.
@@ -204,7 +225,7 @@ Los datos biométricos requieren protección especial y, según tu jurisdicción
 
 ## Estado de validación
 
-Pruebas automatizadas: `pip install -r requirements-dev.txt && python -m pytest` (180 pruebas, datos
+Pruebas automatizadas: `pip install -r requirements-dev.txt && python -m pytest` (191 pruebas, datos
 sintéticos). El sonido de entrada se probó con audio simulado y su carga/validación con el fichero real; **no se ha oído por un altavoz real** y el timbre se eligió por duración y formato, no por escucha. **Ejecutadas aquí (x86_64, sin hardware):** todas pasan. Además se verificaron, en este equipo:
 arranque real de la aplicación, parada ordenada con SIGTERM, permisos de ficheros, rechazo de enlace
 a red sin contraseña, la interfaz completa en Chromium (flujo de registro, modo prueba, vigilancia, historial,
@@ -257,7 +278,7 @@ app/            camera · person_detector · face_recognition · authorized_peop
                 event_manager · sound_alert · ntfy_client · notification_queue · database · security
                 config · service (orquestador) · main · web/ (API + interfaz)
 scripts/        download_models.py · update.sh · uninstall.sh · pi-sentinel.service.in
-tests/          pytest (180) · ui_harness.py (servidor de desarrollo con cámara simulada)
+tests/          pytest (191) · ui_harness.py (servidor de desarrollo con cámara simulada)
 docs/           ARQUITECTURA.md · CALIBRACION.md
 ```
 

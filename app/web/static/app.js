@@ -443,7 +443,8 @@ views.alarmas = {
     const statusEl = h('div', { class: 'stack' });
     const st = al.status;
     statusEl.append(...nn(h('div', {}, badge(st.audio_available ? 'Audio disponible' : 'Sin audio', st.audio_available ? 'ok' : 'error'), ' ', st.player ? `Reproductor: ${st.player}` : ''),
-      st.last_error ? h('p', { class: 'error' }, st.last_error) : null, st.muted ? h('p', { class: 'note' }, 'La alarma está silenciada temporalmente.') : null));
+      st.last_error ? h('p', { class: 'error' }, st.last_error) : null,
+      h('p', { class: 'muted small' }, 'Altavoz Bluetooth: conéctalo en el sistema y ponlo como salida predeterminada. Si no suena, ejecuta en la Pi: python -m app.main audio-test'), st.muted ? h('p', { class: 'note' }, 'La alarma está silenciada temporalmente.') : null));
     const up = h('input', { type: 'file', accept: '.wav,audio/wav' });
     root.append(h('div', { class: 'grid' },
       h('section', { class: 'card' }, h('h2', {}, 'Alarma sonora'), statusEl,
@@ -466,7 +467,9 @@ views.alarmas = {
           { path: 'alarm.duration_seconds', label: 'Duración máxima (s)', type: 'number', min: 1, max: 300, step: 1 },
           { path: 'alarm.repetitions', label: 'Repeticiones', type: 'number', min: 1, max: 50, int: true },
           { path: 'alarm.min_interval_seconds', label: 'Tiempo mínimo entre alarmas (s)', type: 'number', min: 0, max: 3600, step: 1 },
-          { path: 'alarm.audio_device', label: 'Dispositivo ALSA (opcional)', type: 'text', hint: 'Ej. plughw:1,0. Vacío = predeterminado' },
+          { path: 'alarm.player', label: 'Reproductor de audio', type: 'select', options: [['auto', 'Automático (PipeWire → PulseAudio → ALSA)'], ['pw-play', 'pw-play (PipeWire)'], ['paplay', 'paplay (PulseAudio)'], ['aplay', 'aplay (ALSA directo)']], hint: 'Para altavoz Bluetooth usa pw-play o paplay. Se aplica también al sonido de entrada.' },
+          { path: 'alarm.audio_device', label: 'Salida de audio (opcional)', type: 'text', hint: 'Vacío = la salida predeterminada del sistema. Ej. bluez_output.XX_XX… (pw-play/paplay) o plughw:1,0 (aplay). Ver «audio-test».' },
+          { path: 'alarm.lead_in_seconds', label: 'Silencio previo (s)', type: 'number', min: 0, max: 3, step: 0.1, hint: 'Los altavoces Bluetooth tardan en «despertar» y se comen el inicio del sonido' },
         ])),
       h('section', { class: 'card' }, h('h2', {}, 'Sonido de entrada'),
         h('p', { class: 'muted small' }, 'Un sonido breve en la Raspberry Pi cuando se confirma que alguien ha entrado. Es independiente de la alarma y de las notificaciones; si suena la alarma de desconocido, no se superpone. Elige uno de los incluidos o sube el tuyo desde tu dispositivo (arriba, «Sonido propio»).'),

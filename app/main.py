@@ -129,7 +129,7 @@ def cmd_check(args) -> int:
     """Diagnóstico de compatibilidad. Código de salida ≠ 0 si falta algo imprescindible."""
     from .camera import list_cameras
     from .service import FACE_DET_MODEL, FACE_REC_MODEL, PERSON_MODEL
-    from .sound_alert import PLAYERS
+    from .sound_alert import available_players
 
     paths = resolve_paths()
     problems = 0
@@ -157,8 +157,8 @@ def cmd_check(args) -> int:
         problems += 0 if present else 1
     cams = list_cameras()
     print("Cámaras:       " + (", ".join(c["label"] for c in cams) if cams else "ninguna detectada"))
-    players = [e for e, _ in PLAYERS if shutil.which(e)]
-    print("Audio:         " + (", ".join(players) if players else "sin reproductor (instala alsa-utils)"))
+    players = available_players()
+    print("Audio:         " + (", ".join(players) + "  (orden de preferencia; ver «audio-test»)" if players else "sin reproductor (instala alsa-utils)"))
     try:
         import picamera2  # noqa: F401
 
@@ -167,6 +167,62 @@ def cmd_check(args) -> int:
         print("Picamera2:     no disponible (solo cámaras USB/V4L2)")
     print(f"Datos:         {paths.data_dir}")
     return 1 if problems else 0
+
+
+def _run_text(cmd: list[str]) -> str:
+    import subprocess
+
+    from .sound_alert import audio_env
+
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=8, env=audio_env())
+        return (r.stdout or r.stderr).strip()
+    except Exception as exc:  # noqa: BLE001
+        return f"(no disponible: {exc})"
+
+
+def cmd_audio_test(args) -> int:
+    """Diagnóstico de audio: lista reproductores y salidas, y reproduce el sonido por cada reproductor."""
+    import threading
+
+    from .sound_alert import (PLAYERS, AudioError, SubprocessBackend, audio_env, available_players, build_pcm,
+                              generate_default_wav, read_wav)
+
+    env = audio_env()
+    print(f"Usuario: uid={os.getuid()}  XDG_RUNTIME_DIR={env.get('XDG_RUNTIME_DIR', '(no definido)')}  PULSE_SERVER={env.get('PULSE_SERVER', '(no definido)')}")
+    players = available_players()
+    print("Reproductores instalados:", ", ".join(players) or "NINGUNO")
+    if shutil.which("wpctl"):
+        print("\n--- wpctl status (PipeWire) ---\n" + "\n".join(_run_text(["wpctl", "status"]).splitlines()[:30]))
+    if shutil.which("pactl"):
+        print("\n--- salidas (pactl) ---\n" + _run_text(["pactl", "list", "short", "sinks"]) + "\nPredeterminada: " + _run_text(["pactl", "get-default-sink"]))
+    if shutil.which("aplay"):
+        print("\n--- tarjetas ALSA (aplay -l) ---\n" + _run_text(["aplay", "-l"]))
+    if not players:
+        print("\nNo hay reproductor: sudo apt install alsa-utils pulseaudio-utils pipewire-audio-client-libraries")
+        return 1
+    paths = resolve_paths()
+    wav = paths.data_dir / "tmp" / "audio-test.wav"
+    generate_default_wav(wav, seconds=1.2)
+    ch, rate, pcm = read_wav(wav)
+    import wave
+
+    data = b"\x00\x00" * int(0.5 * rate) + build_pcm(pcm, ch, rate, 0.8, 1, 5.0, normalize=True)
+    with wave.open(str(wav), "wb") as w:
+        w.setnchannels(ch); w.setsampwidth(2); w.setframerate(rate); w.writeframes(data)
+    chosen = [args.player] if args.player else [e for e, _ in PLAYERS if e in players]
+    be, ok_any = SubprocessBackend(), False
+    for pl in chosen:
+        print(f"\n>> Reproduciendo con {pl}" + (f" en «{args.device}»" if args.device else "") + " … ¿lo oyes?")
+        try:
+            be.play(wav, threading.Event(), args.device or "", pl)
+            print("   terminó sin errores (si no se oyó nada: la salida predeterminada no es tu altavoz)")
+            ok_any = True
+        except AudioError as exc:
+            print(f"   ERROR: {exc}")
+    wav.unlink(missing_ok=True)
+    print("\nAnota qué reproductor SÍ se oyó y fíjalo en la interfaz (Alarmas → Reproductor de audio).")
+    return 0 if ok_any else 1
 
 
 def cmd_benchmark(args) -> int:
@@ -220,6 +276,10 @@ def main(argv: list[str] | None = None) -> int:
     r.set_defaults(fn=cmd_run)
     sub.add_parser("set-password", help="Define la contraseña de administración").set_defaults(fn=cmd_set_password)
     sub.add_parser("check", help="Comprueba compatibilidad y dependencias").set_defaults(fn=cmd_check)
+    at = sub.add_parser("audio-test", help="Diagnostica el audio (altavoz Bluetooth, HDMI, jack)")
+    at.add_argument("--player", choices=["pw-play", "paplay", "aplay"])
+    at.add_argument("--device", help="Salida concreta (sink de PipeWire/Pulse o dispositivo ALSA)")
+    at.set_defaults(fn=cmd_audio_test)
     b = sub.add_parser("benchmark", help="Mide el rendimiento de los modelos")
     b.add_argument("--image")
     b.add_argument("--runs", type=int, default=10)

@@ -101,7 +101,11 @@ class AlarmSettings(_Model):
     duration_seconds: float = Field(default=10.0, ge=1.0, le=300.0)
     repetitions: int = Field(default=3, ge=1, le=50)
     min_interval_seconds: float = Field(default=30.0, ge=0.0, le=3600.0)
-    audio_device: str = Field(default="", max_length=64)
+    audio_device: str = Field(default="", max_length=96)
+    # Reproductor y dispositivo se leen SIEMPRE de «alarm» (los comparte el sonido de entrada)
+    player: Literal["auto", "pw-play", "paplay", "aplay"] = "auto"
+    # Silencio previo: un altavoz Bluetooth tarda en «despertar» y se come el inicio de sonidos cortos
+    lead_in_seconds: float = Field(default=0.5, ge=0.0, le=3.0)
 
     @field_validator("sound")
     @classmethod
@@ -115,7 +119,7 @@ class AlarmSettings(_Model):
     @field_validator("audio_device")
     @classmethod
     def _dev(cls, v: str) -> str:
-        if v and not re.fullmatch(r"[A-Za-z0-9_:,.=-]{1,64}", v):
+        if v and not re.fullmatch(r"[A-Za-z0-9_:,.=@-]{1,96}", v):
             raise ValueError("dispositivo de audio no válido")
         return v
 

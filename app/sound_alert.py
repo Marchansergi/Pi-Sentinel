@@ -27,7 +27,10 @@ log = logging.getLogger(__name__)
 
 MAX_SOUND_BYTES = 8 * 1024 * 1024
 MAX_SOUND_SECONDS = 60
-PLAYERS = (("aplay", ["-q"]), ("paplay", []), ("pw-play", []))
+# Orden de preferencia: los servidores de sonido (PipeWire/PulseAudio) primero, porque son los que
+# enrutan al altavoz Bluetooth; `aplay` va directo a ALSA y puede acabar en HDMI/jack.
+PLAYERS = (("pw-play", []), ("paplay", []), ("aplay", ["-q"]))
+PLAYER_CHOICES = ("auto", "pw-play", "paplay", "aplay")
 
 
 class AudioError(RuntimeError):
@@ -35,42 +38,65 @@ class AudioError(RuntimeError):
 
 
 class AudioBackend(Protocol):
-    def check(self) -> str: ...
-    def play(self, path: Path, stop: threading.Event, device: str = "") -> None: ...
+    def check(self, player: str = "auto") -> str: ...
+    def play(self, path: Path, stop: threading.Event, device: str = "", player: str = "auto") -> None: ...
+
+
+def audio_env() -> dict:
+    """Entorno para el reproductor. Como servicio systemd no hay sesión de usuario: se apunta al
+    socket de audio del usuario (PipeWire/PulseAudio) si existe."""
+    env = dict(os.environ)
+    run_dir = f"/run/user/{os.getuid()}"
+    if "XDG_RUNTIME_DIR" not in env and os.path.isdir(run_dir):
+        env["XDG_RUNTIME_DIR"] = run_dir
+    rd = env.get("XDG_RUNTIME_DIR")
+    if rd and "PULSE_SERVER" not in env and os.path.exists(f"{rd}/pulse/native"):
+        env["PULSE_SERVER"] = f"unix:{rd}/pulse/native"
+    return env
+
+
+def available_players() -> list[str]:
+    return [e for e, _ in PLAYERS if shutil.which(e)]
 
 
 class SubprocessBackend:
     def __init__(self) -> None:
         self.name: str | None = None
 
-    def _find(self) -> tuple[str, list[str]]:
-        for exe, args in PLAYERS:
+    def _find(self, player: str = "auto") -> tuple[str, list[str]]:
+        wanted = [(e, a) for e, a in PLAYERS if player in ("auto", e)]
+        for exe, args in wanted:
             p = shutil.which(exe)
             if p:
                 self.name = exe
                 return p, args
+        if player != "auto":
+            raise AudioError(f"El reproductor '{player}' no está instalado. Elige «Automático» u otro en Alarmas.")
         raise AudioError(
-            "No se encontró ningún reproductor de audio (aplay/paplay/pw-play). "
-            "Instala 'alsa-utils' y comprueba la salida de audio con 'aplay -l'."
+            "No se encontró ningún reproductor de audio (pw-play/paplay/aplay). "
+            "Instala 'alsa-utils' (o 'pipewire-audio-client-libraries') y comprueba la salida de audio."
         )
 
-    def check(self) -> str:
-        exe, _ = self._find()
+    def check(self, player: str = "auto") -> str:
+        exe, _ = self._find(player)
         return Path(exe).name
 
-    def play(self, path: Path, stop: threading.Event, device: str = "") -> None:
-        exe, args = self._find()
+    def play(self, path: Path, stop: threading.Event, device: str = "", player: str = "auto") -> None:
+        exe, args = self._find(player)
+        name = Path(exe).name
         cmd = [exe, *args]
         if device:
-            if Path(exe).name == "aplay":
+            if name == "aplay":
                 cmd += ["-D", device]
-            elif Path(exe).name == "paplay":
+            elif name == "paplay":
                 cmd += [f"--device={device}"]
+            elif name == "pw-play":
+                cmd += [f"--target={device}"]
         cmd.append(str(path))
         try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=audio_env())
         except OSError as exc:
-            raise AudioError(f"No se pudo ejecutar el reproductor: {exc}") from exc
+            raise AudioError(f"No se pudo ejecutar {name}: {exc}") from exc
         try:
             while proc.poll() is None:
                 if stop.wait(0.1):
@@ -81,8 +107,8 @@ class SubprocessBackend:
                         proc.kill()
                     return
             if proc.returncode != 0:
-                err = (proc.stderr.read() or b"").decode("utf-8", "replace").strip()[:200]
-                raise AudioError(f"El reproductor falló (código {proc.returncode}): {err or 'sin detalles'}. ¿Hay salida de audio conectada?")
+                err = (proc.stderr.read() or b"").decode("utf-8", "replace").strip()[:240]
+                raise AudioError(f"{name} falló (código {proc.returncode}): {err or 'sin detalles'}. ¿El altavoz está conectado y es la salida predeterminada?")
         finally:
             if proc.stderr:
                 proc.stderr.close()
@@ -190,6 +216,11 @@ class SoundAlert:
     def _cfg(self):
         return getattr(self._get(), self.section)
 
+    def _target(self) -> tuple[str, str]:
+        """(reproductor, dispositivo): compartidos por la alarma y el sonido de entrada."""
+        a = self._get().alarm
+        return a.player, a.audio_device
+
     def ensure_default(self) -> None:
         for path, gen in ((self.default_path, generate_default_wav), (self.chime_path, generate_chime_wav)):
             if not path.exists():
@@ -256,7 +287,7 @@ class SoundAlert:
         t = self._thread
         return bool(t and t.is_alive())
 
-    def trigger(self, force: bool = False) -> str:
+    def trigger(self, force: bool = False, wait: float = 0.0) -> str:
         """Dispara la alarma. Estados: TRIGGERED, DISABLED, MUTED, RATE_LIMITED, BUSY, ERROR."""
         try:
             cfg = self._cfg()
@@ -271,7 +302,7 @@ class SoundAlert:
                 if self.playing():
                     return "BUSY"
                 try:
-                    self.player = self._backend.check()
+                    self.player = self._backend.check(self._target()[0])
                     path = self.resolve(cfg.sound)
                     ch, rate, pcm = read_wav(path)
                 except AudioError as exc:
@@ -281,17 +312,22 @@ class SoundAlert:
                 data = build_pcm(pcm, ch, rate, cfg.volume, cfg.repetitions, cfg.duration_seconds, normalize=True)
                 self._last_start = self._clock()
                 self._stop.clear()
-                self._thread = threading.Thread(
-                    target=self._play, args=(data, ch, rate, cfg.audio_device), name=f"sound-{self.section}", daemon=True
-                )
+                lead = int(self._get().alarm.lead_in_seconds * rate) * ch
+                data = b"\x00\x00" * lead + data
+                self._thread = threading.Thread(target=self._play, args=(data, ch, rate), name=f"sound-{self.section}", daemon=True)
                 self._thread.start()
-                return "TRIGGERED"
+                thread = self._thread
+            if wait > 0:  # prueba explícita: espera un poco para detectar fallos inmediatos del reproductor
+                thread.join(wait)
+                if not thread.is_alive() and self.last_error:
+                    return "ERROR"
+            return "TRIGGERED"
         except Exception as exc:  # la alarma jamás debe romper el flujo principal
             self.last_error = str(exc)
             log.exception("Error inesperado al disparar la alarma")
             return "ERROR"
 
-    def _play(self, data: bytes, ch: int, rate: int, device: str) -> None:
+    def _play(self, data: bytes, ch: int, rate: int) -> None:
         tmp = None
         try:
             self.tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -301,7 +337,8 @@ class SoundAlert:
                 w.setsampwidth(2)
                 w.setframerate(rate)
                 w.writeframes(data)
-            self._backend.play(Path(tmp), self._stop, device)
+            player, device = self._target()
+            self._backend.play(Path(tmp), self._stop, device, player)
             self.last_error = ""
             self.last_played_at = self._wall()
         except AudioError as exc:
@@ -329,7 +366,7 @@ class SoundAlert:
     def status(self) -> dict:
         cfg = self._cfg()
         try:
-            available, player, problem = True, self._backend.check(), ""
+            available, player, problem = True, self._backend.check(self._target()[0]), ""
         except AudioError as exc:
             available, player, problem = False, None, str(exc)
         return {

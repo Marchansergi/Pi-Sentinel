@@ -399,13 +399,13 @@ def create_app(
     @app.post("/api/alarm/test")
     def alarm_test(request: Request):
         require(request)
-        state = service.alarm.trigger(force=True)
+        state = service.alarm.trigger(force=True, wait=2.5)
         return {"state": state, "error": service.alarm.last_error if state == "ERROR" else ""}
 
     @app.post("/api/alarm/chime-test")
     def chime_test(request: Request):
         require(request)
-        state = service.chime.trigger(force=True)
+        state = service.chime.trigger(force=True, wait=2.5)
         return {"state": state, "error": service.chime.last_error if state == "ERROR" else ""}
 
     @app.post("/api/alarm/stop")

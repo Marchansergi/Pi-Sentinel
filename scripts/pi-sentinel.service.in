@@ -1,6 +1,7 @@
 [Unit]
 Description=Pi Sentinel - vigilancia local con reconocimiento facial
-After=network.target sound.target
+After=network.target sound.target user@@UID@.service
+Wants=user@@UID@.service
 StartLimitIntervalSec=300
 StartLimitBurst=5
 
@@ -8,6 +9,8 @@ StartLimitBurst=5
 Type=simple
 User=@USER@
 SupplementaryGroups=video audio
+# Audio (altavoz Bluetooth/PipeWire/PulseAudio): el servicio necesita llegar a la sesión de audio del usuario
+Environment=XDG_RUNTIME_DIR=/run/user/@UID@
 WorkingDirectory=@DIR@
 ExecStart=@DIR@/.venv/bin/python -m app.main run
 # Reinicia solo ante fallos y con límite (5 en 5 min); la causa queda en el journal y en data/logs/
