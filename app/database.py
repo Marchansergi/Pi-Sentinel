@@ -67,6 +67,14 @@ CREATE TABLE IF NOT EXISTS notifications (
     sent_at REAL
 );
 CREATE INDEX IF NOT EXISTS idx_notif_status ON notifications(status, next_attempt_at);
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    ip TEXT NOT NULL DEFAULT '',
+    action TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts);
 """
 
 

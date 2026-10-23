@@ -22,6 +22,7 @@ from typing import Callable
 
 import numpy as np
 
+from .audit import AuditLog
 from .authorized_people import AuthorizedPeople, ProfileError
 from .camera import CameraManager, default_source_factory, list_cameras
 from .config import ConfigStore, Paths, Settings
@@ -114,6 +115,7 @@ class SentinelService:
         self.paths = paths
         self.db = db or Database(paths.db_path)
         self.config = ConfigStore(self.db)
+        self.audit = AuditLog(self.db)
         self.secrets = SecretStore(paths.secrets_path)
         self.people = AuthorizedPeople(self.db, lambda: self.config.get().face.min_samples)
         self.camera = CameraManager(lambda: self.config.get().camera, source_factory)
@@ -302,7 +304,7 @@ class SentinelService:
         self._last_maintenance = now
         try:
             days = self.config.get().storage.history_retention_days
-            n = self.events.purge(days) + self.notifier.purge(days)
+            n = self.events.purge(days) + self.notifier.purge(days) + self.audit.purge(max(days, 90))
             if n:
                 log.info("Retención: %d registros antiguos eliminados", n)
         except Exception:

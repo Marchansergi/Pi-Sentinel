@@ -161,12 +161,25 @@ class EventManager:
 
     # ------------------------------------------------------------------ consulta / mantenimiento
 
-    def list_events(self, limit: int = 50, offset: int = 0) -> list[dict]:
+    @staticmethod
+    def _where(status: str | None, since: float | None, until: float | None) -> tuple[str, list]:
+        cond, args = [], []
+        if status:
+            cond.append("e.identity_status=?"); args.append(status)
+        if since is not None:
+            cond.append("e.started_at>=?"); args.append(since)
+        if until is not None:
+            cond.append("e.started_at<?"); args.append(until)
+        return (" WHERE " + " AND ".join(cond)) if cond else "", args
+
+    def list_events(self, limit: int = 50, offset: int = 0, status: str | None = None,
+                    since: float | None = None, until: float | None = None) -> list[dict]:
+        where, args = self._where(status, since, until)
         rows = self._db.query(
             "SELECT e.*, n.status AS n_status, n.attempts AS n_attempts, n.last_error AS n_error "
-            "FROM events e LEFT JOIN notifications n ON n.event_id=e.id "
-            "ORDER BY e.started_at DESC LIMIT ? OFFSET ?",
-            (max(1, min(limit, 500)), max(0, offset)),
+            "FROM events e LEFT JOIN notifications n ON n.event_id=e.id" + where +
+            " ORDER BY e.started_at DESC LIMIT ? OFFSET ?",
+            (*args, max(1, min(limit, 500)), max(0, offset)),
         )
         out = []
         for r in rows:
@@ -174,6 +187,10 @@ class EventManager:
             d["notification"] = d.pop("n_status") or d["notify_state"]
             out.append(d)
         return out
+
+    def count_events(self, status: str | None = None, since: float | None = None, until: float | None = None) -> int:
+        where, args = self._where(status, since, until)
+        return self._db.query_one("SELECT COUNT(*) AS n FROM events e" + where, args)["n"]
 
     def recent_count(self, hours: float = 24.0) -> int:
         return self._db.query_one("SELECT COUNT(*) AS n FROM events WHERE started_at>=?", (self._clock() - hours * 3600,))["n"]

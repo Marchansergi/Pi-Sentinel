@@ -11,7 +11,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import csv
 import hmac
+import io
+from datetime import datetime
 import logging
 from pathlib import Path
 from typing import Any, Literal
@@ -21,7 +24,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 
-from ..authorized_people import POSES, ProfileError
+from ..authorized_people import ProfileError
 from ..security import (
     LoginGuard,
     RateLimiter,
@@ -36,7 +39,8 @@ from ..security import (
     verify_password,
 )
 from ..service import Mode, SentinelService, ServiceError
-from ..sound_alert import AudioError
+from ..sound_alert import AudioError, audio_diagnostics, play_test_tone
+from ..system_info import APP_VERSION, system_info
 
 log = logging.getLogger(__name__)
 
@@ -91,8 +95,17 @@ class TokenReq(BaseModel):
     token: str | None = Field(default=None, max_length=256)
 
 
-class AlarmTestReq(BaseModel):
-    pass
+class AudioTestReq(BaseModel):
+    player: Literal["auto", "pw-play", "paplay", "aplay"] = "auto"
+    device: str = Field(default="", max_length=96, pattern=r"^[A-Za-z0-9_:,.=@-]*$")
+
+
+def _flatten_keys(d: dict, prefix: str = "") -> list[str]:
+    out = []
+    for k, v in d.items():
+        key = f"{prefix}{k}"
+        out += _flatten_keys(v, key + ".") if isinstance(v, dict) else [key]
+    return out
 
 
 def _fmt_validation(exc: ValidationError) -> str:
@@ -129,6 +142,12 @@ def create_app(
 
     def auth_required() -> bool:
         return bool(secrets.password_hash()) or lan_open
+
+    def client_ip(request: Request) -> str:
+        return request.client.host if request.client else "?"
+
+    def audit(request: Request, action: str, detail: str = "") -> None:
+        service.audit.record(action, detail, client_ip(request))
 
     # ------------------------------------------------------------------ middleware
 
@@ -220,6 +239,7 @@ def create_app(
             "password_set": bool(secrets.password_hash()),
             "lan": lan_open,
             "first_run": len(service.people.list_people()) == 0,
+            "version": APP_VERSION,
         }
 
     @app.post("/api/login")
@@ -233,8 +253,10 @@ def create_app(
             raise HTTPException(429, f"Demasiados intentos. Espera {wait:.0f}s.")
         if not verify_password(req.password, secrets.password_hash()):
             guard.failure(ip)
+            audit(request, "login.fail")
             raise HTTPException(401, "Contraseña incorrecta")
         guard.success(ip)
+        audit(request, "login.ok")
         sessions.destroy(tok)  # nueva sesión tras autenticarse (evita fijación)
         ntok, csrf = sessions.create(authed=True)
         set_cookie(request, response, ntok)
@@ -244,6 +266,7 @@ def create_app(
     def logout(request: Request, response: Response):
         tok, _ = current(request)
         require(request)
+        audit(request, "logout")
         sessions.destroy(tok)
         response.delete_cookie(COOKIE, path="/")
         return {"ok": True}
@@ -258,6 +281,7 @@ def create_app(
         if problem:
             raise HTTPException(422, problem)
         secrets.set("admin_password_hash", hash_password(req.new))
+        audit(request, "password.change")
         sessions.destroy_all()
         tok, csrf = sessions.create(authed=True)
         set_cookie(request, response, tok)
@@ -274,6 +298,7 @@ def create_app(
     def surveillance(req: ModeReq, request: Request):
         require(request)
         service.set_mode(req.mode)
+        audit(request, "mode.change", req.mode)
         return {"mode": service.mode}
 
     # ------------------------------------------------------------------ ajustes
@@ -297,6 +322,7 @@ def create_app(
         if web.get("allow_lan") and not secrets.password_hash():
             raise HTTPException(409, "Define primero una contraseña de administración antes de permitir el acceso desde la red.")
         _, restart = service.config.update(patch)
+        audit(request, "settings.update", ", ".join(_flatten_keys(patch))[:300])
         return {"settings": public_settings(), "restart_required": restart}
 
     # ------------------------------------------------------------------ cámara
@@ -334,7 +360,9 @@ def create_app(
     @app.post("/api/people")
     def people_create(req: PersonReq, request: Request):
         require(request)
-        return person_json(service.people.create(req.name))
+        p = service.people.create(req.name)
+        audit(request, "person.create", f"#{p.id}")
+        return person_json(p)
 
     @app.patch("/api/people/{pid}")
     def people_patch(pid: int, req: PersonPatch, request: Request):
@@ -344,12 +372,14 @@ def create_app(
             p = service.people.rename(pid, req.name)
         if req.enabled is not None:
             p = service.people.set_enabled(pid, req.enabled)
+        audit(request, "person.update", f"#{pid}" + ("" if req.enabled is None else (" activado" if req.enabled else " desactivado")))
         return person_json(p)
 
     @app.delete("/api/people/{pid}")
     def people_delete(pid: int, request: Request):
         require(request)
         service.people.delete_person(pid)
+        audit(request, "person.delete", f"#{pid}")
         return {"ok": True}
 
     @app.get("/api/people/{pid}/samples")
@@ -360,12 +390,16 @@ def create_app(
     @app.post("/api/people/{pid}/samples/capture")
     def samples_capture(pid: int, req: CaptureReq, request: Request):
         require(request)
-        return service.capture_sample(pid, req.pose)
+        r = service.capture_sample(pid, req.pose)
+        if r.get("ok"):
+            audit(request, "sample.add", f"persona #{pid}")
+        return r
 
     @app.delete("/api/people/{pid}/samples/{sid}")
     def samples_delete(pid: int, sid: int, request: Request):
         require(request)
         service.people.delete_sample(pid, sid)
+        audit(request, "sample.delete", f"persona #{pid}")
         return {"ok": True}
 
     @app.post("/api/recognition/test")
@@ -387,6 +421,7 @@ def create_app(
         n = service.people.delete_all()
         service.db.kv_delete("calibration_genuine")
         service.db.kv_delete("calibration_impostor")
+        audit(request, "biometrics.delete_all", f"{n} perfiles")
         return {"deleted_profiles": n}
 
     # ------------------------------------------------------------------ alarma
@@ -425,14 +460,19 @@ def create_app(
     @app.post("/api/alarm/sounds")
     async def alarm_upload(request: Request, name: str):
         require(request)
-        from ..config import AlarmSettings
-
-        AlarmSettings(sound=name)  # reutiliza la validación del nombre
-        if name == "default":
-            raise HTTPException(422, "Nombre reservado")
+        if len(name) > 120:
+            raise HTTPException(422, "Nombre demasiado largo")
         data = await request.body()
-        service.alarm.add_user_sound(name, data)
-        return {"ok": True, "sounds": service.alarm.list_sounds()}
+        # la conversión (ffmpeg) puede tardar: fuera del bucle de eventos
+        saved, truncated = await asyncio.get_running_loop().run_in_executor(None, service.alarm.add_user_sound, name, data)
+        audit(request, "sound.upload", saved)
+        return {"ok": True, "name": saved, "truncated": truncated, "sounds": service.alarm.list_sounds()}
+
+    @app.get("/api/alarm/sounds/{name}")
+    def alarm_get_sound(name: str, request: Request):
+        require(request)
+        path = service.alarm.resolve(name)  # valida el nombre (sin rutas)
+        return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "no-store"})
 
     @app.delete("/api/alarm/sounds/{name}")
     def alarm_delete_sound(name: str, request: Request):
@@ -443,7 +483,22 @@ def create_app(
             service.config.update({"alarm": {"sound": "default"}})
         if cfg.entry.sound == name:
             service.config.update({"entry": {"sound": "entrada.wav"}})
+        audit(request, "sound.delete", name)
         return {"ok": True, "sounds": service.alarm.list_sounds()}
+
+    # ------------------------------------------------------------------ diagnóstico de audio
+
+    @app.get("/api/audio/diagnostics")
+    def audio_diag(request: Request):
+        require(request)
+        a = service.config.get().alarm
+        return audio_diagnostics(a.player, a.audio_device)
+
+    @app.post("/api/audio/test")
+    def audio_test(req: AudioTestReq, request: Request):
+        require(request)
+        a = service.config.get().alarm
+        return play_test_tone(service.alarm.backend, service.paths.tmp_dir, req.player, req.device, a.lead_in_seconds)
 
     # ------------------------------------------------------------------ notificaciones
 
@@ -464,6 +519,7 @@ def create_app(
     def notif_generate_topic(request: Request):
         require(request)
         service.config.update({"ntfy": {"topic": generate_topic()}})
+        audit(request, "ntfy.topic")
         return notif_topic(request)
 
     @app.put("/api/notifications/token")
@@ -473,6 +529,7 @@ def create_app(
         if tok and (len(tok) < 8 or any(c.isspace() for c in tok)):
             raise HTTPException(422, "El token no es válido")
         secrets.set("ntfy_token", tok or None)
+        audit(request, "ntfy.token", "definido" if tok else "eliminado")
         return {"token_set": bool(secrets.ntfy_token()), "token_hint": mask_token(secrets.ntfy_token())}
 
     @app.post("/api/notifications/test")
@@ -488,19 +545,57 @@ def create_app(
     @app.delete("/api/notifications/history")
     def notif_clear(request: Request):
         require(request)
+        audit(request, "notifications.clear")
         return {"deleted": service.notifier.clear_history()}
 
     # ------------------------------------------------------------------ historial
 
+    def _status_filter(status: str | None) -> str | None:
+        if status and status not in ("AUTHORIZED", "UNKNOWN", "UNVERIFIED"):
+            raise HTTPException(422, "Filtro de estado no válido")
+        return status or None
+
     @app.get("/api/events")
-    def events_list(request: Request, limit: int = 50, offset: int = 0):
+    def events_list(request: Request, limit: int = 50, offset: int = 0, status: str | None = None,
+                    since: float | None = None, until: float | None = None):
         require(request)
-        return {"events": service.events.list_events(limit, offset)}
+        st = _status_filter(status)
+        return {"events": service.events.list_events(limit, offset, st, since, until),
+                "total": service.events.count_events(st, since, until)}
+
+    @app.get("/api/events.csv")
+    def events_csv(request: Request, status: str | None = None, since: float | None = None, until: float | None = None):
+        require(request)
+        rows = service.events.list_events(500, 0, _status_filter(status), since, until)
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["inicio", "fin", "evento", "estado", "alarma", "notificacion", "observaciones", "detalle"])
+        fmt = lambda t: datetime.fromtimestamp(t).isoformat(sep=" ", timespec="seconds") if t else ""
+        for e in rows:
+            w.writerow([fmt(e["started_at"]), fmt(e["ended_at"]), e["id"], e["identity_status"], e["alarm_state"],
+                        e["notification"], e["observations"], e["detail"]])
+        return Response(buf.getvalue(), media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": 'attachment; filename="pi-sentinel-eventos.csv"'})
 
     @app.delete("/api/events")
     def events_clear(request: Request):
         require(request)
-        return {"deleted": service.events.clear()}
+        n = service.events.clear()
+        audit(request, "history.clear", f"{n} eventos")
+        return {"deleted": n}
+
+    # ------------------------------------------------------------------ sistema / auditoría
+
+    @app.get("/api/system")
+    def system(request: Request):
+        require(request)
+        return system_info(service.paths.data_dir, service.paths.db_path)
+
+    @app.get("/api/audit")
+    def audit_list(request: Request, limit: int = 100, offset: int = 0):
+        require(request)
+        rows, total = service.audit.list(limit, offset)
+        return {"entries": rows, "total": total}
 
     # ------------------------------------------------------------------ estáticos
 

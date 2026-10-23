@@ -155,24 +155,51 @@ mínimas, ausencia para «salida», tiempo entre alertas.
 
 ### Altavoz Bluetooth o «no suena nada»
 
-Pi Sentinel reproduce con `pw-play` (PipeWire) → `paplay` (PulseAudio) → `aplay` (ALSA), en ese orden, y
-usa **la salida predeterminada del sistema**. Para un altavoz Bluetooth:
+Abre **Sonido y alarmas → Salida de audio**. Esa página hace el diagnóstico completo sin usar la terminal:
 
-1. Empareja y conecta el altavoz en el sistema (`bluetoothctl`, o el icono de Bluetooth del escritorio) y
-   márcalo como salida predeterminada (`wpctl status` / `pactl get-default-sink`). Si Pi Sentinel suena en
-   HDMI/jack en vez de en el altavoz, el predeterminado no es el altavoz.
-2. Ejecuta `python -m app.main audio-test`: muestra reproductores y salidas y reproduce un tono con cada
-   reproductor para que oigas cuál funciona. Fija el que suene en *Alarmas → Reproductor de audio* (y, si
-   hace falta, la salida concreta, p. ej. `bluez_output.XX_XX_XX_XX_XX_XX.1`).
-3. Si lo ejecutas como **servicio systemd**, necesita llegar a tu sesión de audio: el instalador añade
-   `XDG_RUNTIME_DIR` y propone `sudo loginctl enable-linger <usuario>` para que esa sesión (y la conexión
-   Bluetooth) exista sin tener el escritorio abierto. Si instalaste antes de este cambio, vuelve a ejecutar
-   `./install.sh --service` o añade esa variable a la unidad.
-4. El silencio previo (0,5 s por defecto) evita que el altavoz «dormido» se coma el inicio; súbelo si aún
-   se corta. «Probar» ahora espera el resultado real y muestra el error del reproductor si falla.
+- **Comprobaciones**: reproductores instalados, usuario (aviso si se ejecuta como root/sudo), sesión de audio
+  (PipeWire/PulseAudio) encontrada, si corre como servicio, dispositivos Bluetooth conectados, salida
+  predeterminada y soporte de formatos. Debajo, los avisos concretos de lo que falla y cómo arreglarlo.
+- **Salida y reproductor**: lista las salidas reales del sistema (las Bluetooth se marcan con 🔵). Elige tu
+  altavoz y guarda; se usa para la alarma y para el sonido de entrada.
+- **Probar reproducción**: reproduce un tono con cada reproductor y la salida elegida y muestra el resultado
+  **real** del reproductor (o su error). Si lo oyes, pulsa «Sí, usar este».
 
-Limitación: si el reproductor termina sin error pero el sonido sale por otra salida, no hay forma de
-detectarlo desde la aplicación; `audio-test` y la salida predeterminada son la guía.
+Causas habituales y lo que hace ahora Pi Sentinel:
+
+1. **Ejecutarlo con `sudo`**: el audio Bluetooth pertenece a tu usuario. Pi Sentinel intenta usar la sesión de
+   audio del usuario del escritorio aunque corra como root, pero lo correcto es **no usar sudo** (o el servicio
+   systemd, que corre con tu usuario).
+2. **Servicio systemd sin sesión de audio**: la unidad define `XDG_RUNTIME_DIR` y el instalador propone
+   `sudo loginctl enable-linger <usuario>`. Si instalaste antes de esta versión, vuelve a ejecutar
+   `./install.sh --service`.
+3. **Salida predeterminada equivocada** (HDMI/jack): elige el altavoz en la lista de salidas.
+4. **Un reproductor falla**: en modo «Automático» se prueba el siguiente (pw-play → paplay → aplay) y se
+   recuerda el que funcionó.
+5. **Inicio cortado**: sube el «Silencio previo» (0,5 s por defecto).
+6. **El fichero subido no sonaba**: ahora se aceptan WAV de 8/16/24/32 bit entero o coma flotante, cualquier
+   frecuencia y número de canales; con `ffmpeg` instalado también MP3, OGG, FLAC y M4A. Todo se convierte
+   y se puede escuchar en el navegador desde **Biblioteca**.
+
+Desde la terminal también está `python -m app.main audio-test`.
+
+Limitación que no se puede eliminar: si el reproductor termina sin error pero el sistema envía el sonido a
+otra salida, la aplicación no puede saberlo; por eso la prueba pregunta «¿lo has oído?».
+
+## Interfaz de administración
+
+Consola web con navegación lateral (Monitorización · Configuración · Administración), estado global en la
+cabecera (vigilancia, cámara, audio, ntfy), tema claro/oscuro y diseño adaptado a móvil. Funciona sin
+Internet (sin CDN ni dependencias externas).
+
+- **Panel**: modo de vigilancia (Detenida / Modo prueba / Vigilando), indicadores de 24 h, salud de cada
+  componente, análisis en directo y actividad reciente.
+- **Historial**: filtros por estado y periodo, paginación y **exportación CSV**.
+- **Sistema**: temperatura de la CPU (aviso a partir de 75 °C), memoria, disco, tiempo activo y
+  **registro de auditoría** (inicios de sesión, cambios de ajustes, altas/bajas de perfiles, borrados…
+  con fecha e IP; nunca valores sensibles).
+- Formularios con aviso de «cambios sin guardar», diálogos de confirmación propios y borrados críticos que
+  exigen escribir una palabra de confirmación.
 
 ## Iniciar y detener la vigilancia, inicio automático, registros
 
@@ -225,7 +252,7 @@ Los datos biométricos requieren protección especial y, según tu jurisdicción
 
 ## Estado de validación
 
-Pruebas automatizadas: `pip install -r requirements-dev.txt && python -m pytest` (191 pruebas, datos
+Pruebas automatizadas: `pip install -r requirements-dev.txt && python -m pytest` (222 pruebas, datos
 sintéticos). El sonido de entrada se probó con audio simulado y su carga/validación con el fichero real; **no se ha oído por un altavoz real** y el timbre se eligió por duración y formato, no por escucha. **Ejecutadas aquí (x86_64, sin hardware):** todas pasan. Además se verificaron, en este equipo:
 arranque real de la aplicación, parada ordenada con SIGTERM, permisos de ficheros, rechazo de enlace
 a red sin contraseña, la interfaz completa en Chromium (flujo de registro, modo prueba, vigilancia, historial,
@@ -278,7 +305,7 @@ app/            camera · person_detector · face_recognition · authorized_peop
                 event_manager · sound_alert · ntfy_client · notification_queue · database · security
                 config · service (orquestador) · main · web/ (API + interfaz)
 scripts/        download_models.py · update.sh · uninstall.sh · pi-sentinel.service.in
-tests/          pytest (191) · ui_harness.py (servidor de desarrollo con cámara simulada)
+tests/          pytest (222) · ui_harness.py (servidor de desarrollo con cámara simulada)
 docs/           ARQUITECTURA.md · CALIBRACION.md
 ```
 

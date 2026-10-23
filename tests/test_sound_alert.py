@@ -127,7 +127,7 @@ def test_user_sounds_validation_and_path_safety(tmp_path):
     sa.add_user_sound("mi.wav", good.read_bytes())
     assert {"name": "mi.wav", "builtin": False} in sa.list_sounds()
     with pytest.raises(AudioError):
-        sa.add_user_sound("malo.wav", b"esto no es un wav")
+        sa.add_user_sound("malo.wav", b"RIFF\x00\x00\x00\x00WAVEbasura")
     with pytest.raises(AudioError):
         sa.add_user_sound("grande.wav", b"0" * (9 * 1024 * 1024))
     with pytest.raises(AudioError):
@@ -137,15 +137,17 @@ def test_user_sounds_validation_and_path_safety(tmp_path):
     sa.delete_user_sound("mi.wav")
 
 
-def test_non_16bit_wav_rejected(tmp_path):
+def test_8bit_wav_is_accepted_and_converted(tmp_path):
     p = tmp_path / "8bit.wav"
     with wave.open(str(p), "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(1)
         w.setframerate(8000)
-        w.writeframes(b"\x80" * 800)
-    with pytest.raises(AudioError):
-        read_wav(p)
+        w.writeframes(bytes([128, 200, 56, 128] * 200))
+    ch, rate, pcm = read_wav(p)
+    assert ch == 1 and rate == 8000 and len(pcm) == 1600
+    s = np.frombuffer(pcm, "<i2")
+    assert s[1] > 15000 and s[2] < -15000  # 200 → positivo, 56 → negativo
 
 
 def test_alarm_setting_names_are_validated():

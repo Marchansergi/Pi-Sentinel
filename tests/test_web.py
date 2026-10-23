@@ -394,7 +394,9 @@ def test_sound_upload_validation(web, tmp_path):
     generate_default_wav(good)
     hdr = {"Content-Type": "audio/wav"}
     assert api.post("/api/alarm/sounds?name=sirena.wav", content=good.read_bytes(), headers=hdr).status_code == 200
-    assert api.post("/api/alarm/sounds?name=../evil.wav", content=good.read_bytes(), headers=hdr).status_code == 422
+    r = api.post("/api/alarm/sounds?name=../evil.wav", content=good.read_bytes(), headers=hdr)
+    assert r.status_code == 200 and r.json()["name"] == "evil.wav"  # la ruta se descarta
+    assert (svc.paths.user_sounds_dir / "evil.wav").is_file() and not (svc.paths.data_dir / "evil.wav").exists()
     assert api.post("/api/alarm/sounds?name=falso.wav", content=b"no soy un wav", headers=hdr).status_code == 422
     assert api.post("/api/alarm/sounds?name=default", content=good.read_bytes(), headers=hdr).status_code == 422
     api.put("/api/settings", json={"alarm": {"sound": "sirena.wav"}})
@@ -448,3 +450,52 @@ def test_chime_endpoints_settings_and_shared_sound_deletion(web, tmp_path):
     assert svc.chime.is_muted() and svc.alarm.is_muted()  # «silenciar» cubre ambos
     api.delete("/api/alarm/sounds/mio.wav")
     assert svc.config.get().entry.sound == "entrada.wav"
+
+
+def test_audio_diagnostics_and_test_endpoints(web):
+    svc, api = web
+    d = api.get("/api/audio/diagnostics").json()
+    for k in ("players", "sinks", "hints", "runtime_dir", "as_root", "default_sink"):
+        assert k in d
+    r = api.post("/api/audio/test", json={"player": "auto", "device": ""}).json()
+    assert r["ok"] is True  # backend simulado
+    assert api.post("/api/audio/test", json={"player": "rm", "device": ""}).status_code == 422
+    assert api.post("/api/audio/test", json={"player": "auto", "device": "x; rm -rf /"}).status_code == 422
+
+
+def test_upload_any_name_is_sanitized(web, tmp_path):
+    svc, api = web
+    good = tmp_path / "ok.wav"
+    generate_default_wav(good)
+    r = api.post("/api/alarm/sounds?name=Mi%20timbre%20(1).wav", content=good.read_bytes(), headers={"Content-Type": "audio/wav"})
+    assert r.status_code == 200 and r.json()["name"] == "Mi timbre _1.wav"
+
+
+def test_system_audit_and_csv(web):
+    svc, api = web
+    s = api.get("/api/system").json()
+    for k in ("version", "hostname", "memory", "disk", "cpu_temp", "uptime_app"):
+        assert k in s
+    api.post("/api/people", json={"name": "Ana"})
+    api.put("/api/settings", json={"alarm": {"volume": 0.5}, "ntfy": {"topic": "pisentinel-" + "z" * 30}})
+    entries = api.get("/api/audit").json()["entries"]
+    actions = [e["action"] for e in entries]
+    assert "person.create" in actions and "settings.update" in actions
+    upd = next(e for e in entries if e["action"] == "settings.update")
+    assert "alarm.volume" in upd["detail"] and "zzzz" not in upd["detail"]  # claves, nunca valores
+    svc.db.execute("INSERT INTO events(id,started_at,kind,identity_status) VALUES('e1',1700000000,'presence','UNKNOWN')")
+    svc.db.execute("INSERT INTO events(id,started_at,kind,identity_status) VALUES('e2',1700000100,'presence','UNVERIFIED')")
+    r = api.get("/api/events?status=UNKNOWN").json()
+    assert r["total"] == 1 and r["events"][0]["id"] == "e1"
+    assert api.get("/api/events?status=OTRO").status_code == 422
+    assert api.get("/api/events?since=1700000050").json()["total"] == 1
+    csv_r = api.get("/api/events.csv")
+    assert csv_r.headers["content-type"].startswith("text/csv") and "e1" in csv_r.text and "UNVERIFIED" in csv_r.text
+
+
+def test_sound_preview_endpoint(web):
+    svc, api = web
+    r = api.get("/api/alarm/sounds/default")
+    assert r.status_code == 200 and r.content[:4] == b"RIFF"
+    assert api.get("/api/alarm/sounds/..%2F..%2Fsecrets.json").status_code in (404, 422)
+    assert api.get("/api/alarm/sounds/no-existe.wav").status_code == 422

@@ -33,12 +33,13 @@ RAM=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo); echo "RAM: ${RAM} MB
 [ "$RAM" -lt 1800 ] && echo "AVISO: poca RAM. Tras instalar usa Resolución del detector 320 y 1 análisis/s."
 
 say "4. Dependencias del sistema (apt, requiere sudo)"
-echo "Se instalarán: python3-venv python3-pip alsa-utils (audio) y, en Raspberry Pi, python3-picamera2 (cámara oficial)."
+echo "Se instalarán: python3-venv python3-pip, audio (alsa-utils, pulseaudio-utils para pactl/paplay, pipewire-bin para pw-play),"
+echo "ffmpeg (para subir sonidos MP3/OGG/FLAC/M4A) y, en Raspberry Pi, python3-picamera2 (cámara oficial)."
 if command -v apt-get >/dev/null && ask "¿Instalar con apt?"; then
   run sudo apt-get update
-  PKGS="python3-venv python3-pip alsa-utils"
+  PKGS="python3-venv python3-pip alsa-utils pulseaudio-utils pipewire-bin ffmpeg"
   [ "$IS_PI" = 1 ] && PKGS="$PKGS python3-picamera2"
-  run sudo apt-get install -y $PKGS || echo "AVISO: no se pudieron instalar todos los paquetes; revisa el mensaje anterior."
+  run sudo apt-get install -y $PKGS || { echo "AVISO: no se pudieron instalar todos los paquetes; se reintenta uno a uno."; for p in $PKGS; do run sudo apt-get install -y "$p" || echo "  - no disponible: $p"; done; }
 else echo "(omitido)"; fi
 groups | grep -qw video || echo "AVISO: tu usuario no está en el grupo 'video' (cámara USB): sudo usermod -aG video $USER"
 groups | grep -qw audio || echo "AVISO: tu usuario no está en el grupo 'audio': sudo usermod -aG audio $USER"
